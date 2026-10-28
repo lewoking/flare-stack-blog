@@ -14,7 +14,7 @@
 [![TanStack Start](https://img.shields.io/badge/TanStack%20Start-black?logo=tanstack&style=flat-square)](https://tanstack.com/start)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4.0-38B2AC?logo=tailwind-css&style=flat-square)](https://tailwindcss.com)
 
-[在线演示](https://blog.dukda.com) · [部署指南](./docs/deployment.md) · [本地开发](#本地开发) · [贡献指南](./CONTRIBUTING.md) · [交流群组](https://t.me/+vWuQYybv1kgxMDkx)
+[在线演示](https://blog.dukda.com) · [部署指南](./docs/deployment.md) · [视频教程](https://www.bilibili.com/video/BV1iQHr6NEcC/) · [本地开发](#本地开发) · [贡献指南](./CONTRIBUTING.md) · [交流群组](https://t.me/+vWuQYybv1kgxMDkx)
 
 </div>
 
@@ -51,7 +51,8 @@ Flare Stack Blog 是一个深度拥抱 Cloudflare 生态的开源独立博客系
   - **异步队列事件解耦**：通知邮件发送与 Webhook 派发经由 Cloudflare Queues 异步队列处理，接口响应零阻塞。
 
 - 🛠️ **系统与扩展能力**
-  - **安全身份认证**：集成 Better Auth，原生支持邮箱密码账号体系与 GitHub OAuth 快捷登录。
+  - **安全身份认证**：集成 Better Auth，支持 GitHub OAuth 快捷登录，以及发送到邮箱的 6 位登录码（无密码；需在后台配置邮件发送后启用）。
+  - **通知推送**：新评论、回复和友链申请可推送到 Telegram、Discord、飞书、钉钉、企业微信、Bark、ntfy，或带签名的通用 JSON 与自定义模板，详见 [Webhook 推送](docs/webhook.md)。
   - **开放 API 接口**：支持在后台签发 API Key，通过规范化 OpenAPI / oRPC 接口无缝对接第三方自动化工具或发布脚本。
   - **访问分析与 SEO**：内建 Umami 统计与文章热度自动同步，开箱支持 Canonical、Schema.org、RSS / Atom / JSON Feed、Sitemap 与 Robots 标准。
 
@@ -87,10 +88,9 @@ bun install
 # 复制本地配置文件模板
 cp .env.example .env
 cp .dev.vars.example .dev.vars
-cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-参考 `.env` 与 `.dev.vars` 中的注释完成基础项配置。本地开发通过 Miniflare 本地模拟 D1、KV 和 R2 存储服务，`wrangler.jsonc` 可直接使用模板占位符启动。
+参考 `.env` 与 `.dev.vars` 中的注释完成基础项配置。本地开发通过 Miniflare 本地模拟 D1、KV 和 R2 存储服务，Worker 配置位于 `cloudflare.config.ts`，未设置部署变量时会使用占位符直接启动。该配置需要 Node ≥ 24（见 `.node-version`）。
 
 ### 2. 启动本地开发服务
 
@@ -101,8 +101,8 @@ bun dev
 在浏览器中打开 `http://localhost:3000` 即可开始预览。
 
 > [!TIP]
-> - 本地开发模式下，注册账号不会真实投递外部邮件，验证链接会直接打印在终端控制台中，点击即可完成激活。
-> - 本地首个注册的账号同样会自动赋予管理员权限。
+> - 本地开发模式下不会真实投递邮件，登录码会连同邮件内容直接打印在终端控制台中。登录页只有在后台配置了邮件发送服务后才会显示邮箱登录。
+> - 本地数据库中第一个创建的用户同样会自动成为管理员。
 
 ### 常用开发脚本
 

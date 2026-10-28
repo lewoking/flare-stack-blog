@@ -42,6 +42,53 @@ describe("FriendLinkService", () => {
   });
 
   describe("User Submission", () => {
+    it.each(["", "   "])(
+      "refuses a submission from a user whose name is %j",
+      async (name) => {
+        const session = createMockSession({
+          user: { id: "nameless-1", name, email: "nameless@example.com" },
+        });
+        const nameless = createAuthTestContext({
+          session,
+          executionCtx: createMockExecutionCtx(),
+        });
+        await seedUser(nameless.db, session.user);
+
+        const result = await FriendLinkService.submitFriendLink(nameless, {
+          siteName: "Test Site",
+          siteUrl: "https://example.com",
+        });
+
+        expect(result.error?.reason).toBe("NAME_REQUIRED");
+        expect(await FriendLinkService.getMyFriendLinks(nameless)).toHaveLength(
+          0,
+        );
+      },
+    );
+
+    it("does not exempt an admin without a name", async () => {
+      const session = createMockSession({
+        user: {
+          id: "nameless-admin",
+          name: " ",
+          email: "na@example.com",
+          role: "admin",
+        },
+      });
+      const nameless = createAuthTestContext({
+        session,
+        executionCtx: createMockExecutionCtx(),
+      });
+      await seedUser(nameless.db, session.user);
+
+      const result = await FriendLinkService.submitFriendLink(nameless, {
+        siteName: "Test Site",
+        siteUrl: "https://example.com",
+      });
+
+      expect(result.error?.reason).toBe("NAME_REQUIRED");
+    });
+
     it("should submit a friend link with pending status", async () => {
       const result = await FriendLinkService.submitFriendLink(userContext, {
         siteName: "Test Site",
@@ -66,6 +113,27 @@ describe("FriendLinkService", () => {
           type: "EMAIL",
           data: expect.objectContaining({
             subject: expect.stringContaining("友链申请"),
+          }),
+        }),
+      );
+    });
+
+    it("uses the configured site title in the email layout", async () => {
+      await seedSystemConfig(adminContext, {
+        ...DEFAULT_CONFIG,
+        site: { ...DEFAULT_CONFIG.site, title: "后台设置的站点名" },
+      });
+
+      await FriendLinkService.submitFriendLink(userContext, {
+        siteName: "New Site",
+        siteUrl: "https://newsite.com",
+      });
+
+      expect(userContext.env.QUEUE.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "EMAIL",
+          data: expect.objectContaining({
+            html: expect.stringContaining("后台设置的站点名"),
           }),
         }),
       );

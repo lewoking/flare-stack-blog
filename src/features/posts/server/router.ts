@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AdminPostListPageSchema,
+  CreatePostInputSchema,
   HomePostsInputSchema,
   HomePostsResponseSchema,
   DeletePostInputSchema,
@@ -17,6 +18,8 @@ import {
   PublishPostInputSchema,
   UnpublishPostInputSchema,
   UpdatePostInputSchema,
+  VideoMetaInputSchema,
+  VideoMetaSchema,
 } from "@/features/posts/schema/posts.schema";
 import {
   DeletePostRevisionsInputSchema,
@@ -28,6 +31,8 @@ import {
 } from "@/features/posts/schema/post-revisions.schema";
 import * as PostRevisionService from "@/features/posts/services/post-revisions.service";
 import * as PostService from "@/features/posts/services/posts.service";
+import * as VideoMetaService from "@/features/posts/services/video-meta.service";
+import { videoSourceOf } from "@/features/posts/utils/video-source";
 import { postPopularityService } from "@/features/post-popularity/service/post-popularity.service";
 import { getPostPublisher } from "@/lib/do/post-publisher-binding";
 import { adminProcedure, publicProcedure } from "@/lib/orpc/procedure";
@@ -181,14 +186,37 @@ const generateSlug = adminProcedure
   .input(GenerateSlugInputSchema)
   .handler(({ context, input }) => PostService.generateSlug(context, input));
 
+const videoMeta = adminProcedure
+  .route({
+    method: "GET",
+    path: "/admin/posts/video-meta",
+    summary: "Look up an embedded video's title, cover and length",
+    description:
+      "Asks the video's provider once, when the editor embeds it. Returns null when the provider has nothing to give or cannot be reached.",
+    tags: ["Admin Posts"],
+  })
+  .input(VideoMetaInputSchema)
+  .output(VideoMetaSchema)
+  .handler(({ input }) => {
+    const source = videoSourceOf(input);
+    return source ? VideoMetaService.fetchVideoMeta(source) : null;
+  });
+
 const create = adminProcedure
   .route({
     method: "POST",
     path: "/admin/posts",
-    summary: "Get or create an empty draft post",
+    summary: "Create a draft post",
+    description:
+      "With data, creates a new draft post carrying that content. Without data, returns an existing empty draft post when one exists, otherwise creates one.",
     tags: ["Admin Posts"],
   })
-  .handler(({ context }) => PostService.createEmptyPost(context));
+  .input(CreatePostInputSchema)
+  .handler(({ context, input }) =>
+    input?.data
+      ? PostService.createDraft(context, input.data)
+      : PostService.createEmptyPost(context),
+  );
 
 const update = adminProcedure
   .errors(postErrors)
@@ -241,10 +269,8 @@ const publishPost = adminProcedure
     tags: ["Admin Posts"],
   })
   .input(PublishPostInputSchema)
-  .handler(async ({ context, input, errors }) => {
-    const result = await getPostPublisher(context.env, input.id).publish(
-      input.id,
-    );
+  .handler(async ({ input, errors }) => {
+    const result = await (await getPostPublisher(input.id)).publish(input.id);
     return unwrapResult<{ success: boolean }>(result, {
       POST_NOT_FOUND: () => {
         throw errors.POST_NOT_FOUND();
@@ -267,10 +293,8 @@ const unpublishPost = adminProcedure
     tags: ["Admin Posts"],
   })
   .input(UnpublishPostInputSchema)
-  .handler(async ({ context, input, errors }) => {
-    const result = await getPostPublisher(context.env, input.id).unpublish(
-      input.id,
-    );
+  .handler(async ({ input, errors }) => {
+    const result = await (await getPostPublisher(input.id)).unpublish(input.id);
     return unwrapResult<{ success: boolean }>(result, {
       POST_NOT_FOUND: () => {
         throw errors.POST_NOT_FOUND();
@@ -356,6 +380,7 @@ export default {
     list: adminList,
     get: adminGet,
     generateSlug,
+    videoMeta,
     create,
     update,
     remove,

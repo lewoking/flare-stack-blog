@@ -105,39 +105,39 @@ const testConnection = adminProcedure
     tags: ["Admin Email"],
   })
   .input(AdminTestEmailConnectionSchema)
-  .handler(async ({ context, input, errors }) =>
-    unwrapResult(
-      EmailService.testEmailConnection(context, {
-        ...input,
-        password: await ConfigService.resolveTestSecret(
-          context,
-          "emailPassword",
-          input.password,
-        ),
-      }),
-      {
-        SEND_FAILED: () => {
-          throw errors.SEND_FAILED();
-        },
-      },
-    ),
-  );
+  .handler(async ({ context, input, errors }) => {
+    const result = await EmailService.testEmailConnection(context, {
+      ...input,
+      password: await ConfigService.resolveTestSecret(
+        context,
+        "emailPassword",
+        input.password,
+      ),
+    });
+    if (result.error) {
+      // The SMTP error tells the Admin what to fix, so pass it through.
+      throw errors.SEND_FAILED({ message: result.error.message });
+    }
+    return result.data;
+  });
 
-const hasPassword = authProcedure
+const testStatus = adminProcedure
   .route({
     method: "GET",
-    path: "/me/has-password",
-    summary: "Check if the current user has a password",
-    tags: ["Auth"],
+    path: "/admin/email/test-status",
+    summary: "Get the last email test result for the saved settings",
+    description:
+      "Returns verified or failed when the last test used exactly the saved email settings, and untested otherwise.",
+    tags: ["Admin Email"],
   })
-  .handler(({ context }) => AuthService.userHasPassword(context));
+  .handler(({ context }) => EmailService.getEmailTestStatus(context));
 
 export default {
   configured,
+  testStatus,
   unsubscribe,
   replyStatus,
   availability,
   toggleReply,
   testConnection,
-  hasPassword,
 };

@@ -22,6 +22,13 @@ const AdminPostCoverSchema = PublicPostCoverSchema.extend({
   fileName: z.string(),
 });
 
+const PublicSlugSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Slug of the live page at /post/{publicSlug}. It can differ from slug, the draft's, until the next publish. Null while the post is not published.",
+  );
+
 const PostSelectSchema = createSelectSchema(PostsTable, {
   publishedAt: coercedDateNullable,
   pinnedAt: coercedDateNullable,
@@ -30,13 +37,30 @@ const PostSelectSchema = createSelectSchema(PostsTable, {
 }).omit({
   publicSnapshotJson: true,
 });
+/**
+ * Strict on purpose, and narrower than the table.
+ *
+ * `createUpdateSchema` takes every column, so `id`, `createdAt` and
+ * `updatedAt` were writable: a PATCH could move a row to another id or
+ * backdate it, and `updatedAt` is the default list sort key, so a forged
+ * value buried the post. They are the server's to set, never the client's.
+ *
+ * Publication is not a field either. A plain object would silently strip
+ * these: a client that PATCHed `{ status: "published" }` got a 200 back and a
+ * post that was still a draft. Rejecting the key says so instead.
+ */
 const PostUpdateSchema = createUpdateSchema(PostsTable, {
   contentJson: NullableJsonContentSchema.optional(),
-}).omit({
-  publicSnapshotJson: true,
-  publicSlug: true,
-  status: true,
-});
+})
+  .omit({
+    publicSnapshotJson: true,
+    publicSlug: true,
+    status: true,
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .strict();
 
 export const PostItemSchema = PostSelectSchema.omit({
   contentJson: true,
@@ -83,17 +107,14 @@ export const PostWithTocSchema = PostSelectSchema.omit({
   })
   .nullable();
 
-export const AdminPostSchema = PostSelectSchema.omit({
-  publicSlug: true,
-})
-  .extend({
-    tags: z.array(TagSelectSchema).optional(),
-    hasPublicSnapshot: z.boolean(),
-    publicSnapshotContentJson: NullableJsonContentSchema,
-    serverToday: z.string(),
-    cover: AdminPostCoverSchema.nullable(),
-  })
-  .nullable();
+export const AdminPostSchema = PostSelectSchema.extend({
+  publicSlug: PublicSlugSchema,
+  tags: z.array(TagSelectSchema).optional(),
+  hasPublicSnapshot: z.boolean(),
+  publicSnapshotContentJson: NullableJsonContentSchema,
+  serverToday: z.string(),
+  cover: AdminPostCoverSchema.nullable(),
+}).nullable();
 
 export function normalizePostTagName(
   tagName: string | undefined,
@@ -169,19 +190,42 @@ export type AdminTaxonomyFilter = z.infer<typeof AdminTaxonomyFilterSchema>;
 
 export const GetPostsInputSchema = z.object({
   taxonomy: AdminTaxonomyFilterSchema.optional(),
+  categoryId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Only posts whose current category is this one."),
+  uncategorized: z
+    .boolean()
+    .optional()
+    .describe("Only posts without a current category."),
+  tagId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Only posts currently carrying this tag."),
   offset: z.number().optional(),
   limit: z.number().optional(),
   status: z.custom<PostStatus>().optional(),
   publicOnly: z.boolean().optional(),
   search: z.string().optional(),
   sortDir: z.enum(["ASC", "DESC"]).optional(),
-  sortBy: z.enum(["publishedAt", "updatedAt"]).optional(),
+  sortBy: z.enum(["publishedAt", "updatedAt", "id"]).optional(),
+  includeContent: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include the editable TipTap body of every item. Ignored when taxonomy.scope is public, where every column is read from the Public Content Snapshot instead. Pagination, the 50 item limit and every other response field stay the same.",
+    ),
 });
 
 const GetPostsCountInputSchema = GetPostsInputSchema.omit({
   offset: true,
   limit: true,
   sortDir: true,
+  includeContent: true,
 });
 
 const AdminPostListItemSchema = z.object({
@@ -189,11 +233,15 @@ const AdminPostListItemSchema = z.object({
   title: z.string(),
   summary: z.string().nullable(),
   slug: z.string(),
+  publicSlug: PublicSlugSchema,
   status: z.enum(["draft", "published"]),
   publishedAt: coercedDateNullable,
   pinnedAt: coercedDateNullable,
   createdAt: coercedDate,
   updatedAt: coercedDate,
+  contentJson: NullableJsonContentSchema.optional().describe(
+    "Only returned when the request asks for includeContent=true outside the public taxonomy scope.",
+  ),
 });
 
 const AdminPostStatusCountsSchema = z.object({
@@ -206,11 +254,34 @@ export const AdminPostListPageSchema = z.object({
   items: z.array(AdminPostListItemSchema),
   total: z.number().int().nonnegative(),
   statusCounts: AdminPostStatusCountsSchema.describe(
-    "Counts matching search, publicOnly and taxonomy scope before status filtering or pagination.",
+    "Counts matching search, publicOnly, taxonomy scope and the category and tag filters before status filtering or pagination.",
   ),
 });
 
 export const FindPostByIdInputSchema = z.object({ id: z.number() });
+
+/**
+ * Content for a newly created draft. When present, `POST /api/admin/posts`
+ * always creates a new draft instead of reusing an existing empty one, so
+ * several external clients can create posts without colliding.
+ */
+const CreatePostDataSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Draft title; a unique slug is generated from it."),
+  summary: z.string().nullable().optional(),
+  contentJson: NullableJsonContentSchema.optional(),
+});
+
+export const CreatePostInputSchema = z
+  .object({
+    data: CreatePostDataSchema.optional().describe(
+      "Omit to keep the get-or-create-empty-draft behavior used by the Admin UI.",
+    ),
+  })
+  .optional();
 
 export const UpdatePostInputSchema = z.object({
   id: z.number(),
@@ -231,9 +302,24 @@ export type GenerateSlugInput = z.infer<typeof GenerateSlugInputSchema>;
 export type GetPostsInput = z.infer<typeof GetPostsInputSchema>;
 export type GetPostsCountInput = z.infer<typeof GetPostsCountInputSchema>;
 export type FindPostByIdInput = z.infer<typeof FindPostByIdInputSchema>;
+export type CreatePostData = z.infer<typeof CreatePostDataSchema>;
 export type UpdatePostInput = z.infer<typeof UpdatePostInputSchema>;
 export type DeletePostInput = z.infer<typeof DeletePostInputSchema>;
 export type PublishPostInput = z.infer<typeof PublishPostInputSchema>;
 export type UnpublishPostInput = z.infer<typeof UnpublishPostInputSchema>;
 export type PostItem = z.infer<typeof PostItemSchema>;
 export type PostWithToc = z.infer<typeof PostWithTocSchema>;
+
+export const VideoMetaInputSchema = z.object({
+  provider: z.enum(["bilibili", "youtube"]),
+  videoId: z.string().max(32),
+  page: z.number().int().positive().nullable().optional(),
+});
+
+export const VideoMetaSchema = z
+  .object({
+    title: z.string().nullable(),
+    cover: z.string().nullable(),
+    duration: z.number().int().nullable(),
+  })
+  .nullable();
